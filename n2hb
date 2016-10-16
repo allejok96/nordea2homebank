@@ -1,0 +1,37 @@
+#!/bin/bash
+#
+# n2hb: Nordea to HomeBank
+#
+
+error()
+{
+    echo "$*" 1>&2
+    exit 1
+}
+
+showhelp()
+{
+    cat<<EOF
+Usage: n2hb FILE
+Make CSV files from Nordea readable by HomeBank
+Files will be saved as FILE_homebank.csv
+EOF
+    exit
+}
+
+[[ $1 = --help ]] && showhelp 0
+[[ $1 ]] || error "No arguemtns"
+[[ -e $1 ]] || error "File does not exist"
+
+# Nordea:
+# First row is header
+# YYYY-MM-DD , Description , [Category] , Amount , [Balance]
+# Last row is a carrige return
+
+# HomeBank:
+# YY-MM-DD ; [Type, 0 = none] ; [Payment info] ; [Payee] ; Description ; Amount ; [Category] ; [Tags]
+
+sed -n '1 d; /^\r$/d;  s/;/,/g; s/^20\([^,]\+\),\("[^"]*"\|[^,]*\),\("[^"]*"\|[^,]*\),\("[^"]\+"\)\(,.*\)\?$/\1;0;;;\2;\4;;/p' < "$1" > "${1%.csv}_homebank.csv"
+
+sed -n '1 d; /^\r$/d; s/;/,/g; s/^20\([^,]\+\),\("[^"]*"\|[^,]*\),\("[^"]*"\|[^,]*\),\("[^"]\+"\)\(,.*\)\?/\1;0;;;\2;\4;;/; t del; b print; : del; d; : print; s/^/Unreadable line: /; p;' < "$1" 1>&2
+
