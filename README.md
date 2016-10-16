@@ -1,2 +1,3 @@
-# nordea2homebank
-Convert CSV files from Nordea to HomeBank readable format (bash script)
+# Nordea2HomeBank
+
+This very simple bash script uses sed to convert CSV files downloaded from [Nordea.se](https://www.nordea.se/) to a format that can be imported into [HomeBank](http://homebank.free.fr/).
