@@ -3,35 +3,59 @@
 # n2hb: Nordea to HomeBank
 #
 
+DEFAULT_DIR="$(xdg-user-dir DOWNLOAD || pwd)"
+
 error()
 {
     echo "$*" 1>&2
     exit 1
 }
 
-showhelp()
-{
-    cat<<EOF
-Usage: n2hb FILE
-Make CSV files from Nordea readable by HomeBank
-Files will be saved as FILE_homebank.csv
+[[ $1 = --help ]] && exec cat<<EOF
+Usage: n2hb [FILE] ...
+Convert CSV from Nordea.se to the format used by HomeBank.
+Defaults to parsing ~/Downloads/*.csv.
 EOF
-    exit
-}
 
-[[ $1 = --help ]] && showhelp 0
-[[ $1 ]] || error "No arguemtns"
-[[ -e $1 ]] || error "File does not exist"
+if [[ $@ ]]; then
+    files=("$@")
+else
+    files=()
+    while read; do
+	files+=("$REPLY")
+    done < <(find "$DEFAULT_DIR/" -type f -name "*.csv" -not -name "homebank_conv*")
+    [[ $files ]] || error "no csv files found in $DEFAULT_DIR"
+fi
 
-# Nordea:
-# First row is header
-# YYYY-MM-DD , Description , [Category] , Amount , [Balance]
-# Last row is a carrige return
+for file in "${files[@]}"; do
+    head -n1 "$file" | grep -Eq "^(.*,){3}|^(.*;){7}" || error "$file: bad file format"
+done
 
-# HomeBank:
-# YY-MM-DD ; [Type, 0 = none] ; [Payment info] ; [Payee] ; Description ; Amount ; [Category] ; [Tags]
+savefile="$(date '+homebank_conv_%Y-%m-%d_%H-%M-%S.csv')"
 
-sed -n '1 d; /^\r$/d;  s/;/,/g; s/^20\([^,]\+\),\("[^"]*"\|[^,]*\),\("[^"]*"\|[^,]*\),\("[^"]\+"\)\(,.*\)\?$/\1;0;;;\2;\4;;/p' < "$1" > "${1%.csv}_homebank.csv"
+for file in "${files[@]}"; do
+    # Show dates contained in each file
+    echo "$file: $(grep -Eo '^[0-9]{4}-[0-9]{2}' "$file" | sort -u | tr '\n' ' ')" 1>&2
 
-sed -n '1 d; /^\r$/d; s/;/,/g; s/^20\([^,]\+\),\("[^"]*"\|[^,]*\),\("[^"]*"\|[^,]*\),\("[^"]\+"\)\(,.*\)\?/\1;0;;;\2;\4;;/; t del; b print; : del; d; : print; s/^/Unreadable line: /; p;' < "$1" 1>&2
+    # HomeBank CSV format:
+    # YY-MM-DD; [Type, 0 = none]; [Payment info]; [Payee]; Description; Amount; [Category]; [Tags]
+    
+    if head -n1 "$file" | grep -Eq "^(.*,){4}"; then
+	# Nordea old format:
+	# First row is header, last row is a carrige return
+	# YYYY-MM-DD, Description, [Category], Amount, [Balance]
+	sed -En '1 d; /^\r$/d; s/;/,/g; s/^20([^,]+),("[^"]*"|[^,]*),("[^"]*"|[^,]*),("[^"]+")(,.*)?$/\1;0;;;\2;\4;;/p' < "$file"
+	sed -En '1 d; /^\r$/d; s/;/,/g; s/^20([^,]+),("[^"]*"|[^,]*),("[^"]*"|[^,]*),("[^"]+")(,.*)?/\1;0;;;\2;\4;;/; t del; b print; : del; d; : print; s/^/unreadable line: /; p;' < "$file" 1>&2
+    elif head -n1 "$file" | grep -Eq "^(.*;){7}"; then
+	# Nordea new format:
+	# First row is header, no newline on last row
+	# YYYY-MM-DD; Amount (decimal comma); From; [Payee]; [Name]; Description; Balance; Currency
+	# 2020-08-14; -90,00; 961223-2836; ; ; Swish betalning Ferreira De Matos E; 61283,84; SEK
+	sed -En '1 d; s/^20([0-9-]+);([0-9,-]+);[^;]*;[^;]*;[^;]*;([^;]*);[^;]*;[^;]*;?$/\1;0;;;\3;\2;;;/p' < "$file"
+    fi
+    
+done > "$savefile"
+
+echo "created $savefile"
+
 
