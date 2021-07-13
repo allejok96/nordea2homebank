@@ -35,25 +35,41 @@ savefile="$(date '+homebank_conv_%Y-%m-%d_%H-%M-%S.csv')"
 
 for file in "${files[@]}"; do
     # Show dates contained in each file
-    echo "$file: $(grep -Eo '^[0-9]{4}-[0-9]{2}' "$file" | sort -u | tr '\n' ' ')" 1>&2
+    echo "$file: $(grep -Eo '^[0-9]{4}-[0-9]{2}' "$file" | sort -u | tr '\n' ' ')" >&2
 
     # HomeBank CSV format:
-    # YY-MM-DD; [Type, 0 = none]; [Payment info]; [Payee]; Description; Amount; [Category]; [Tags]
-    
+    # YY-MM-DD; [Type, 0 = none]; [Payment info]; [Payee]; Description; Amount (-NNNN,NN); [Category]; [Tags]
+
+    number='([-0-9,]+)'
     if head -n1 "$file" | grep -Eq "^(.*,){4}"; then
-	# Nordea old format:
-	# First row is header, last row is a carrige return
-	# YYYY-MM-DD, Description, [Category], Amount, [Balance]
-	sed -En '1 d; /^\r$/d; s/;/,/g; s/^20([^,]+),("[^"]*"|[^,]*),("[^"]*"|[^,]*),("[^"]+")(,.*)?$/\1;0;;;\2;\4;;/p' < "$file"
-	sed -En '1 d; /^\r$/d; s/;/,/g; s/^20([^,]+),("[^"]*"|[^,]*),("[^"]*"|[^,]*),("[^"]+")(,.*)?/\1;0;;;\2;\4;;/; t del; b print; : del; d; : print; s/^/unreadable line: /; p;' < "$file" 1>&2
+        # Nordea old format:
+        # YYYY-MM-DD, Description, Category, Amount ("-N.NNN,NN"), Balance
+        # BUG: breaks if you transfer 1.000.000 but in that case you may pay me to find a better solution
+        any='("[^"]*"|[^,]*)'
+        fmt="s/^20$number,$any,$any,\"($number\.)?$number\",$any\$/\1;0;;;\2;\5\6;;/p"
     elif head -n1 "$file" | grep -Eq "^(.*;){7}"; then
-	# Nordea new format:
-	# First row is header, no newline on last row
-	# YYYY-MM-DD; Amount (decimal comma); From; [Payee]; [Name]; Description; Balance; Currency
-	# 2020-08-14; -90,00; 961223-2836; ; ; Swish betalning Ferreira De Matos E; 61283,84; SEK
-	sed -En '1 d; s/^20([0-9-]+);([0-9,-]+);[^;]*;[^;]*;[^;]*;([^;]*);[^;]*;[^;]*;?$/\1;0;;;\3;\2;;;/p' < "$file"
+        # Nordea new format:
+        # YYYY-MM-DD; Amount (-NNNN,NN); From; [Payee]; [Name]; Description; Balance; Currency
+        any='("[^"]*"|[^;]*)'
+        fmt="s/^20$number;$number;$any;$any;$any;$any;$any;$any\$/\1;0;;;\6;\2;;;/p"
+    else
+        echo "$file: unknown format" >&2
     fi
     
+    sed -En "
+        # Delete first line
+        1 d
+        # Delete empty lines (last one for the old format)
+        /^\r?$/d
+        # Print good lines to stdout
+        $fmt
+        # If line was good, go to next
+        t
+        # Write to stderr (GNU only)
+        s/^/invalid line: /
+        w /dev/stderr
+        " < "$file"
+
 done > "$savefile"
 
 echo "created $savefile"
